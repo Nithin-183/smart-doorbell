@@ -1,4 +1,7 @@
 from time import sleep
+from subprocess import call
+import os
+import picamera
 from picamera import PiCamera
 
 camera = PiCamera()
@@ -10,6 +13,7 @@ import RPi.GPIO as GPIO
 import time
 pb = Pushbullet("o.tAXhoWMOW1LVQpOyLYcdpEd36o8HmIn7")
 detection = {'value': False, 'button_press_time': None, 'intruder_confirmation_time': None}
+pushbullet = {'sent_time': None}
 
 print("Started")
 def button_callback(channel):
@@ -17,11 +21,20 @@ def button_callback(channel):
 		detection['value'] = False
 		print("Button was pushed!")
 		GPIO.output(18,1)
-		camera.stop_recording()
-		camera.capture(datetime.now().strftime("/home/raspberry/Desktop/%Y-%m-%d-%H-%M-%S.jpg"))
-		dev = pb.get_device('HMD Global Nokia 6.1 Plus')
-		#push = dev.push_note("Alert!!", "Ahhh. Push it!!!!")
-		#time.sleep(60)
+		try:
+			camera.stop_recording()
+		except picamera.PiCameraNotRecording:
+			print("Not recording")
+		if not pushbullet['sent_time'] or (pushbullet['sent_time']+timedelta(minutes=2))<datetime.now():
+			filename = datetime.now().strftime("/home/raspberry/Desktop/%Y-%m-%d-%H-%M-%S.jpg")
+			camera.capture(filename)
+			
+			#dev = pb.devices[0]
+			#push1 = pb.push_note("Alert!!", "Someone at yor doorstep!")
+			with open(filename, "rb") as pic:
+				file_data = pb.upload_file(pic, "visitor.jpg")
+			push = pb.push_file(**file_data, body="Someone at your doorstep!")
+			pushbullet['sent_time'] = datetime.now()
 	elif not GPIO.input(16):
 		detection['button_press_time'] = datetime.now()
 		print("Button was released!")
@@ -53,9 +66,16 @@ while True:
 				print("Intruder confirmed")
 				detection['intruder_confirmation_time'] = datetime.now()
 				camera.stop_recording()
-				dev = pb.get_device('HMD Global Nokia 6.1 Plus')
-				#push = dev.push_note("Alert!!", "A wild Sandra appeared")
+				#dev = pb.devices[0]
+				filename = "/home/raspberry/Desktop/video.h264"
+				outname  = "/home/raspberry/Desktop/video.mp4"
+				command = "MP4Box -add " + filename + " " + outname
+				call([command], shell=True)
+				with open(outname, "rb") as vid:
+					file_data = pb.upload_file(vid, "intruder.mp4")
+				push = pb.push_file(**file_data, body="Intruder detected!")
 				detection['value'] = False
+				os.remove(outname)
 				#time.sleep(120)
 				continue
 	if i==0:
@@ -65,7 +85,8 @@ while True:
 	elif i==1:
 		if not detection['value']:
 			detection.update({'value': True, 'time': datetime.now()})
-			camera.start_recording('/home/raspberry/Desktop/video.h264')
+			if intruder_confirmation_delay() and button_press_delay():
+				camera.start_recording('/home/raspberry/Desktop/video.h264')
 		GPIO.output(3,1)
 		print ("intruder", i)
 		time.sleep(0.2)
