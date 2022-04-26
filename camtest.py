@@ -4,6 +4,15 @@ import os
 import picamera
 from picamera import PiCamera
 
+# import the necessary packages for face recognition
+from imutils.video import VideoStream
+from imutils.video import FPS
+import face_recognition
+import imutils
+import pickle
+import time
+import cv2
+
 camera = PiCamera()
 camera.start_preview()
 
@@ -16,6 +25,54 @@ detection = {'value': False, 'button_press_time': None, 'intruder_confirmation_t
 pushbullet = {'sent_time': None}
 
 print("Started")
+
+def recognize_face():
+	currentname = "Unknown"
+	encodingsP = "encodings.pickle"
+
+	print("[INFO] loading encodings + face detector...")
+	data = pickle.loads(open(encodingsP, "rb").read())
+	
+	#print("Loading stream...")
+	#vs = VideoStream(usePiCamera=True).start()
+	#time.sleep(2.0)
+
+	#start_time = datetime.now()
+	
+	#vs = cv2.VideoCapture('/home/raspberry/Desktop/video.h264')
+
+	#while True:
+	#ret, frame = vs.read()
+	frame = cv2.imread('/home/raspberry/Desktop/visitor.jpg')
+	frame = imutils.resize(frame, width=500)
+	boxes = face_recognition.face_locations(frame)
+	encodings = face_recognition.face_encodings(frame, boxes)
+
+	for encoding in encodings:
+		matches = face_recognition.compare_faces(data["encodings"],
+			encoding)
+		name = "Unknown"
+
+		if True in matches:
+			matchedIdxs = [i for (i, b) in enumerate(matches) if b]
+			counts = {}
+
+			for i in matchedIdxs:
+				name = data["names"][i]
+				counts[name] = counts.get(name, 0) + 1
+
+			name = max(counts, key=counts.get)
+
+			if currentname != name:
+				currentname = name
+				break
+	
+	#vs.stop()
+	#camera = PiCamera()
+	#camera.start_preview()
+	
+	return currentname
+
 def button_callback(channel):
 	if GPIO.input(16):
 		detection['value'] = False
@@ -26,14 +83,21 @@ def button_callback(channel):
 		except picamera.PiCameraNotRecording:
 			print("Not recording")
 		if not pushbullet['sent_time'] or (pushbullet['sent_time']+timedelta(minutes=2))<datetime.now():
-			filename = datetime.now().strftime("/home/raspberry/Desktop/%Y-%m-%d-%H-%M-%S.jpg")
+			#filename = datetime.now().strftime("/home/raspberry/Desktop/%Y-%m-%d-%H-%M-%S.jpg")
+			filename = "/home/raspberry/Desktop/visitor.jpg"
 			camera.capture(filename)
 			
 			#dev = pb.devices[0]
 			#push1 = pb.push_note("Alert!!", "Someone at yor doorstep!")
+			visitor_name = recognize_face()
+			print(visitor_name)
 			with open(filename, "rb") as pic:
 				file_data = pb.upload_file(pic, "visitor.jpg")
-			push = pb.push_file(**file_data, body="Someone at your doorstep!")
+			if visitor_name == "Unknown":
+				msg_text = "Someone is at your doorstep!"
+			else:
+				msg_text = visitor_name + " is at your doorstep"
+			push = pb.push_file(**file_data, body=msg_text)
 			pushbullet['sent_time'] = datetime.now()
 	elif not GPIO.input(16):
 		detection['button_press_time'] = datetime.now()
